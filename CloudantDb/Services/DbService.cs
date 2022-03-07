@@ -107,7 +107,7 @@ namespace CloudantDb.Services
 			return ja.ToObject<List<T>>()!;
 		}
 
-		public async Task<Dictionary<string, string>> GetViewDictionaryAsync(string designName, string viewName, QueryParams queryParams)
+		public async Task<Dictionary<string, string>> GetViewDictionaryAsync(string designName, string viewName, QueryParams? queryParams = null)
 		{
 			string url = String.Format(viewPath, designName, viewName);
 
@@ -123,14 +123,9 @@ namespace CloudantDb.Services
 			}
 
 			JObject o = JObject.Parse(js);
-			return ((JArray)o["rows"]!).Select(a => ExtractProp(a)).ToDictionary(a => a.Key, b => b.Value);
-
-
-			KeyValuePair<string,string> ExtractProp(JToken jt)
-			{
-				var prop = ((JObject)jt["value"]!).Properties().ToArray()[0];
-				return new KeyValuePair<string, string>(prop.Name, prop.Value.ToString());
-			}
+			var o2 = (((JArray)o["rows"]!)[0] as JObject) ?? new JObject();
+			var val = (o2["value"] as JObject) ?? new JObject();
+			return val.Properties().ToDictionary(p => p.Name, p => p.Value.ToString());	
 		}
 
 		public async Task<List<T>> GetViewItemsAsync<T>(string designName, string viewName, IEnumerable<string> keys) where T : ICloudantObj
