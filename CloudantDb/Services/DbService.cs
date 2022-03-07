@@ -1,16 +1,10 @@
 ﻿using CloudantDb.Models;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Newtonsoft.Json.Serialization;
-using Newtonsoft.Json;
-using System.Collections;
-using System.Net.Http.Headers;
-using System.Net.Http;
-using System.Threading.Tasks;
-using System;
-using System.Linq;
-using System.Collections.Generic;
-using UtilitiesMaster.ExtMethods.ExtString;
 using System.Net;
+using System.Net.Http.Headers;
+using UtilitiesMaster.ExtMethods.ExtString;
 
 namespace CloudantDb.Services
 {
@@ -113,6 +107,32 @@ namespace CloudantDb.Services
 			return ja.ToObject<List<T>>()!;
 		}
 
+		public async Task<Dictionary<string, string>> GetViewDictionaryAsync(string designName, string viewName, QueryParams queryParams)
+		{
+			string url = String.Format(viewPath, designName, viewName);
+
+			if (queryParams != null)
+				url += "?" + queryParams.RenderParamString();
+
+			string js;
+
+			using (var res = await client.GetAsync(url).ConfigureAwait(false))
+			{
+				res.EnsureSuccessStatusCode();
+				js = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
+			}
+
+			JObject o = JObject.Parse(js);
+			return ((JArray)o["rows"]!).Select(a => ExtractProp(a)).ToDictionary(a => a.Key, b => b.Value);
+
+
+			KeyValuePair<string,string> ExtractProp(JToken jt)
+			{
+				var prop = ((JObject)jt["value"]!).Properties().ToArray()[0];
+				return new KeyValuePair<string, string>(prop.Name, prop.Value.ToString());
+			}
+		}
+
 		public async Task<List<T>> GetViewItemsAsync<T>(string designName, string viewName, IEnumerable<string> keys) where T : ICloudantObj
 		{
 			string url = String.Format(viewPath, designName, viewName);
@@ -203,7 +223,7 @@ namespace CloudantDb.Services
 			}
 		}
 
-		public async Task<ICloudantObj> CreateItemAsync(ICloudantObj item)
+		public async Task<T> CreateItemAsync<T>(T item) where T : ICloudantObj
 		{
 			// updates _id and _rev of item.
 
