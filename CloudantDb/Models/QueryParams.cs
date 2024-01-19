@@ -154,7 +154,7 @@ namespace CloudantDb.Models
 			return String.Join("&", pl);
 		}
 
-		private string MakeParam(string key, string value)
+		private static string MakeParam(string key, string value)
 		{
 			return key + "=" + System.Net.WebUtility.UrlEncode(value);
 		}

@@ -11,14 +11,14 @@ namespace CloudantDb.Services
 	public class DbService : IDisposable
 	{
 		private readonly HttpClient client;
-		private const string baseAddress = "https://{0}.cloudant.com/{1}/";
+		//private const string baseAddress = "https://{0}.cloudant.com/{1}/";
 		private const string viewPath = "_design/{0}/_view/{1}";
 
-		public DbService(string account, string dbName, string authValue)
+		public DbService(string baseAddress, string dbName, string authValue)
 		{
 			client = new HttpClient
 			{
-				BaseAddress = new Uri(String.Format(baseAddress, account, dbName))
+				BaseAddress = new Uri(baseAddress + dbName + "/")
 			};
 			client.DefaultRequestHeaders.Add("Authorization", authValue);
 			client.DefaultRequestHeaders.Add("Accept", "application/json");
@@ -57,9 +57,12 @@ namespace CloudantDb.Services
 			return o["rows"]!.Select(a => (a["key"]!.ToString(), a["value"]!.ToString())).ToList();
 		}
 
-		public async Task<List<(string id, string val)>> GetViewIdsValues(string designName, string viewName)
+		public async Task<List<(string id, string? val)>> GetViewIdsValues(string designName, string viewName, QueryParams? queryParams = null)
 		{
 			string url = String.Format(viewPath, designName, viewName);
+			if (queryParams != null)
+				url += "?" + queryParams.RenderParamString();
+
 			string js;
 
 			using (var res = await client.GetAsync(url).ConfigureAwait(false))
@@ -69,7 +72,7 @@ namespace CloudantDb.Services
 			}
 
 			JObject o = JObject.Parse(js);
-			return o["rows"]!.Select(a => (a["id"]!.ToString(), a["value"]!.ToString())).ToList();
+			return o["rows"]!.Select(a => (a["id"]!.ToString(), a["value"]?.ToString())).ToList();
 		}
 
 		public async Task<string> GetViewJsonAsync(string designName, string viewName, QueryParams queryParams)
@@ -79,11 +82,9 @@ namespace CloudantDb.Services
 			if (queryParams != null)
 				url += "?" + queryParams.RenderParamString();
 
-			using (var res = await client.GetAsync(url).ConfigureAwait(false))
-			{
-				res.EnsureSuccessStatusCode();
-				return await res.Content.ReadAsStringAsync().ConfigureAwait(false);
-			}
+			using var res = await client.GetAsync(url).ConfigureAwait(false);
+			res.EnsureSuccessStatusCode();
+			return await res.Content.ReadAsStringAsync().ConfigureAwait(false);
 		}
 
 		public async Task<List<T>> GetViewItemsAsync<T>(string designName, string viewName, QueryParams queryParams) where T : ICloudantObj
@@ -102,7 +103,7 @@ namespace CloudantDb.Services
 			}
 
 			JObject o = JObject.Parse(js);
-			JArray ja = new JArray(((JArray)o["rows"]!).Select(a => a["doc"]));
+			JArray ja = new(((JArray)o["rows"]!).Select(a => a["doc"]));
 
 			return ja.ToObject<List<T>>()!;
 		}
@@ -123,8 +124,13 @@ namespace CloudantDb.Services
 			}
 
 			JObject o = JObject.Parse(js);
-			var o2 = (((JArray)o["rows"]!)[0] as JObject) ?? new JObject();
-			var val = (o2["value"] as JObject) ?? new JObject();
+			var ja = (JArray?)o["rows"];
+			var val = new JObject();
+			if (ja is not null && ja.Any() && ja[0]["value"] is not null)
+			{
+				val = (ja[0]["value"] as JObject) ?? new JObject();
+			}
+
 			return val.Properties().ToDictionary(p => p.Name, p => p.Value.ToString());	
 		}
 
@@ -142,15 +148,13 @@ namespace CloudantDb.Services
 				content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
 				msg.Content = content;
 
-				using (var res = await client.SendAsync(msg).ConfigureAwait(false))
-				{
-					res.EnsureSuccessStatusCode();
-					js = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
-				}
+				using var res = await client.SendAsync(msg).ConfigureAwait(false);
+				res.EnsureSuccessStatusCode();
+				js = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
 			}
 
 			JObject o = JObject.Parse(js);
-			JArray ja = new JArray(((JArray)o["rows"]!).Select(a => a["doc"]));
+			JArray ja = new(((JArray)o["rows"]!).Select(a => a["doc"]));
 
 			return ja.ToObject<List<T>>()!;
 		}
@@ -163,7 +167,7 @@ namespace CloudantDb.Services
 			using (var res = await client.GetAsync(url).ConfigureAwait(false))
 			{
 				if (res.StatusCode == HttpStatusCode.NotFound)
-					return default(T)!;
+					return default!;
 
 				if ((int)res.StatusCode > 299)
 					throw new HttpRequestException(res.StatusCode.ToString());
@@ -188,15 +192,13 @@ namespace CloudantDb.Services
 				content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
 				msg.Content = content;
 
-				using (var res = await client.SendAsync(msg).ConfigureAwait(false))
-				{
-					res.EnsureSuccessStatusCode();
-					js = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
-				}
+				using var res = await client.SendAsync(msg).ConfigureAwait(false);
+				res.EnsureSuccessStatusCode();
+				js = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
 			}
 
 			JObject o = JObject.Parse(js);
-			JArray ja = new JArray(((JArray)o["rows"]!).Select(a => a["doc"]));
+			JArray ja = new(((JArray)o["rows"]!).Select(a => a["doc"]));
 
 			return ja.ToObject<List<T>>()!;
 		}
@@ -204,18 +206,14 @@ namespace CloudantDb.Services
 
 		public async Task<string> CreateItemAsync(string itemJson)
 		{
-			using (var msg = new HttpRequestMessage(HttpMethod.Post, ""))
-			using (var content = new StringContent(itemJson))
-			{
-				content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
-				msg.Content = content;
+			using var msg = new HttpRequestMessage(HttpMethod.Post, "");
+			using var content = new StringContent(itemJson);
+			content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+			msg.Content = content;
 
-				using (var res = await client.SendAsync(msg).ConfigureAwait(false))
-				{
-					res.EnsureSuccessStatusCode();
-					return await res.Content.ReadAsStringAsync().ConfigureAwait(false);
-				}
-			}
+			using var res = await client.SendAsync(msg).ConfigureAwait(false);
+			res.EnsureSuccessStatusCode();
+			return await res.Content.ReadAsStringAsync().ConfigureAwait(false);
 		}
 
 		public async Task<T> CreateItemAsync<T>(T item) where T : ICloudantObj
@@ -231,11 +229,9 @@ namespace CloudantDb.Services
 				content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
 				msg.Content = content;
 
-				using (var res = await client.SendAsync(msg).ConfigureAwait(false))
-				{
-					res.EnsureSuccessStatusCode();
-					resp = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
-				}
+				using var res = await client.SendAsync(msg).ConfigureAwait(false);
+				res.EnsureSuccessStatusCode();
+				resp = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
 			}
 
 			JObject o = JObject.Parse(resp);
@@ -247,18 +243,14 @@ namespace CloudantDb.Services
 
 		public async Task<string> UpdateItemAsync(string id, string itemJson)
 		{
-			using (var msg = new HttpRequestMessage(HttpMethod.Put, id))
-			using (var content = new StringContent(itemJson))
-			{
-				content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
-				msg.Content = content;
+			using var msg = new HttpRequestMessage(HttpMethod.Put, id);
+			using var content = new StringContent(itemJson);
+			content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+			msg.Content = content;
 
-				using (var res = await client.SendAsync(msg).ConfigureAwait(false))
-				{
-					res.EnsureSuccessStatusCode();
-					return await res.Content.ReadAsStringAsync().ConfigureAwait(false);
-				}
-			}
+			using var res = await client.SendAsync(msg).ConfigureAwait(false);
+			res.EnsureSuccessStatusCode();
+			return await res.Content.ReadAsStringAsync().ConfigureAwait(false);
 		}
 
 		public async Task<T> UpdateItemAsync<T>(T item, bool ignoreConflict = false) where T : ICloudantObj
@@ -285,11 +277,9 @@ namespace CloudantDb.Services
 				content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
 				msg.Content = content;
 
-				using (var res = await client.SendAsync(msg).ConfigureAwait(false))
-				{
-					res.EnsureSuccessStatusCode();
-					resp = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
-				}
+				using var res = await client.SendAsync(msg).ConfigureAwait(false);
+				res.EnsureSuccessStatusCode();
+				resp = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
 			}
 
 			JObject o = JObject.Parse(resp);
@@ -300,11 +290,9 @@ namespace CloudantDb.Services
 
 		public async Task<string> DeleteItemAsync(string id, string rev)
 		{
-			using (var res = await client.DeleteAsync($"{id}?rev={rev}").ConfigureAwait(false))
-			{
-				res.EnsureSuccessStatusCode();
-				return await res.Content.ReadAsStringAsync().ConfigureAwait(false);
-			}
+			using var res = await client.DeleteAsync($"{id}?rev={rev}").ConfigureAwait(false);
+			res.EnsureSuccessStatusCode();
+			return await res.Content.ReadAsStringAsync().ConfigureAwait(false);
 		}
 
 
@@ -314,18 +302,14 @@ namespace CloudantDb.Services
 				new JProperty("docs", JArray.Parse(itemArrayJson))
 			);
 
-			using (var msg = new HttpRequestMessage(HttpMethod.Post, "_bulk_docs"))
-			using (var content = new StringContent(obj.ToString()))
-			{
-				content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
-				msg.Content = content;
+			using var msg = new HttpRequestMessage(HttpMethod.Post, "_bulk_docs");
+			using var content = new StringContent(obj.ToString());
+			content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+			msg.Content = content;
 
-				using (var res = await client.SendAsync(msg).ConfigureAwait(false))
-				{
-					res.EnsureSuccessStatusCode();
-					return await res.Content.ReadAsStringAsync().ConfigureAwait(false);
-				}
-			}
+			using var res = await client.SendAsync(msg).ConfigureAwait(false);
+			res.EnsureSuccessStatusCode();
+			return await res.Content.ReadAsStringAsync().ConfigureAwait(false);
 		}
 
 		public async Task<string> SaveItemAsync(ICloudantObj item)
